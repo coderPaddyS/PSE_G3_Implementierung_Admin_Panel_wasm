@@ -1,4 +1,6 @@
 mod utils;
+mod controller;
+pub use controller::AuthManager;
 
 use wasm_bindgen::prelude::*;
 
