@@ -1,5 +1,5 @@
 [package]
-authors = ["Patrick Schneider <s.patrick.2001@web.de>"]
+authors = ["Patrick Schneider <patrick@itermori.de>"]
 edition = "2021"
 name = "kifapwa"
 version = "0.1.0"

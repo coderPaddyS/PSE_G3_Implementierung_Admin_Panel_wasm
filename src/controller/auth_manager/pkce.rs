@@ -1,3 +1,8 @@
+/// SPDX-License-Identifier: MIT
+/// SPDX-License-Identifier: APACHE
+/// 
+/// 2022, Patrick Schneider <patrick@itermori.de>
+
 use wasm_bindgen::prelude::*;
 use web_sys::Storage;
 use oauth2::{
