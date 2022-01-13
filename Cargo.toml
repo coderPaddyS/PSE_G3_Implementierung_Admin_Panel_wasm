@@ -1,5 +1,5 @@
 [package]
-authors = ["Patrick Schneider <s.patrick.2001@web.de>"]
+authors = ["Patrick Schneider <patrick@itermori.de>"]
 edition = "2021"
 name = "kifapwa"
 version = "0.1.0"
@@ -13,7 +13,19 @@ version = "0.1.7"
 
 [dependencies.wee_alloc]
 optional = true
-version = "0.4.5"
+version = "0.4.4"
+
+[dependencies.web-sys]
+version = "0.3.55"
+features = [
+  "Window",
+  "Storage",
+  "Location"
+]
+
+[dependencies.oauth2]
+features = ["reqwest"]
+version = "4.1.0"
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3.28"

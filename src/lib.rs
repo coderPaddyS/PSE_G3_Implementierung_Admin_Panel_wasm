@@ -1,4 +1,11 @@
+/// SPDX-License-Identifier: MIT
+/// SPDX-License-Identifier: APACHE
+/// 
+/// 2022, Patrick Schneider <patrick@itermori.de>
+
 mod utils;
+mod controller;
+pub use controller::AuthManager;
 
 use wasm_bindgen::prelude::*;
 
