@@ -10,6 +10,8 @@ use oauth2::{
     PkceCodeVerifier
 };
 
+use super::AuthError;
+
 /// The PKCE structs holds the data involved in the authentication process
 /// 
 pub struct PKCE {
@@ -62,7 +64,7 @@ impl PKCE {
     ///     // handle error
     /// }
     /// ```
-    pub fn store(&self, storage: Storage) -> Result<(), JsValue> {
+    pub fn store(&self, storage: &Storage) -> Result<(), JsValue> {
 
         storage.set(PKCE::ID_VERIFIER, &self.verifier.secret())?;
         storage.set(PKCE::ID_CSRF, &self.csrf.secret())?;
@@ -92,26 +94,22 @@ impl PKCE {
     ///     // handle error
     /// }
     /// ```
-    pub fn load(&mut self, storage: Storage) -> Result<(), JsValue> {
+    pub fn load_from(storage: &Storage) -> Result<PKCE, JsValue> {
 
-        match storage.get(PKCE::ID_VERIFIER) {
-            Ok(Some(verifier)) => {
-                self.verifier = PkceCodeVerifier::new(verifier);
+        let (verifier, csrf) = match (
+            storage.get(PKCE::ID_VERIFIER),
+            storage.get(PKCE::ID_CSRF)
+        ) {
+            (Ok(Some(verifier)), Ok(Some(csrf))) => {
+                (PkceCodeVerifier::new(verifier), CsrfToken::new(csrf))
             },
-            Ok(None) => (),
-            Err(e) => return Err(e)
-        }
-        match storage.get(PKCE::ID_CSRF) {
-            Ok(Some(csrf)) => {
-                self.csrf = CsrfToken::new(csrf);
-            },
-            Ok(None) => (),
-            Err(e) => return Err(e)
-        }
-        Ok(())
+            (Ok(None), _) | (_, Ok(None)) => return Err(JsValue::from(AuthError::from("No authentication data in storage found!"))),
+            (Err(e), _) | (_, Err(e)) => return Err(e)
+        };
+        Ok(PKCE::new(verifier, csrf))
     }
 
-    /// Destructure this pkce data into its component to use.
+    /// Destructure this pkce data into its components to use.
     /// The data is moved out of the data, therefore consumes this instance.
     /// 
     /// # Returns

@@ -3,7 +3,10 @@
 //! 
 //! 2022, Patrick Schneider <patrick@itermori.de>
 
+extern crate console_error_panic_hook;
 mod utils;
+use utils::set_panic_hook;
+
 mod controller;
 pub use controller::AuthManager;
 
@@ -14,7 +17,6 @@ use wasm_bindgen::prelude::*;
 #[cfg(feature = "wee_alloc")]
 #[global_allocator]
 static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
-
 
 #[wasm_bindgen]
 extern {
