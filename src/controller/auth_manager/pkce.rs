@@ -5,9 +5,10 @@
 
 use wasm_bindgen::prelude::*;
 use web_sys::Storage;
-use oauth2::{
+use openidconnect::{
     CsrfToken,
-    PkceCodeVerifier
+    PkceCodeVerifier,
+    Nonce
 };
 
 use super::AuthError;
@@ -20,26 +21,37 @@ pub struct PKCE {
     verifier: PkceCodeVerifier,
 
     /// The csrf token involved in the authentication process
-    csrf: CsrfToken
+    csrf: CsrfToken,
+
+    /// The nonce involved to verify the response of the authentication process
+    nonce: Nonce
 }
 
 impl PKCE {
     const ID_VERIFIER: &'static str = "verifier";
     const ID_CSRF: &'static str = "csrf";
+    const ID_NONCE: &'static str = "nonce";
 }
 
 impl PKCE {
 
-    /// Create a new pkce instance with default values
+    /// Create a new pkce instance with the given pkce verifier, csrf token and nonce
+    /// 
+    /// # Arguments
+    /// 
+    /// * `verifier` - The [`PkceCodeVerifier`](PkceCodeVerifier) used to verify the response
+    /// * `csrf` - The [`CsrfToken`](CsrfToken) used to validate CSRF
+    /// * `nonce` - The created [`Nonce`](Nonce)
     /// 
     /// # Example
     /// ```rust
     /// let pkce: PKCE = PKCE::new()
     /// ```
-    pub fn new(verifier: PkceCodeVerifier, csrf: CsrfToken) -> Self {
+    pub fn new(verifier: PkceCodeVerifier, csrf: CsrfToken, nonce: Nonce) -> Self {
         PKCE {
             verifier,
-            csrf
+            csrf,
+            nonce
         }
     }
 
@@ -68,6 +80,7 @@ impl PKCE {
 
         storage.set(PKCE::ID_VERIFIER, &self.verifier.secret())?;
         storage.set(PKCE::ID_CSRF, &self.csrf.secret())?;
+        storage.set(PKCE::ID_NONCE, &self.nonce.secret())?;
         Ok(())
     }
 
@@ -96,17 +109,22 @@ impl PKCE {
     /// ```
     pub fn load_from(storage: &Storage) -> Result<PKCE, JsValue> {
 
-        let (verifier, csrf) = match (
+        let (verifier, csrf, nonce) = match (
             storage.get(PKCE::ID_VERIFIER),
-            storage.get(PKCE::ID_CSRF)
+            storage.get(PKCE::ID_CSRF),
+            storage.get(PKCE::ID_NONCE)
         ) {
-            (Ok(Some(verifier)), Ok(Some(csrf))) => {
-                (PkceCodeVerifier::new(verifier), CsrfToken::new(csrf))
+            (Ok(Some(verifier)), Ok(Some(csrf)), Ok(Some(nonce))) => {
+                (PkceCodeVerifier::new(verifier), CsrfToken::new(csrf), Nonce::new(nonce))
             },
-            (Ok(None), _) | (_, Ok(None)) => return Err(JsValue::from(AuthError::from("No authentication data in storage found!"))),
-            (Err(e), _) | (_, Err(e)) => return Err(e)
+            (Ok(None), _, _) | 
+            (_, Ok(None), _) | 
+            (_, _, Ok(None)) => return Err(JsValue::from(AuthError::from("No authentication data in storage found!"))),
+            (Err(e), _, _) | 
+            (_, Err(e), _) |
+            (_, _, Err(e)) => return Err(e)
         };
-        Ok(PKCE::new(verifier, csrf))
+        Ok(PKCE::new(verifier, csrf, nonce))
     }
 
     /// Destructure this pkce data into its components to use.
@@ -114,20 +132,20 @@ impl PKCE {
     /// 
     /// # Returns
     /// 
-    /// * `(PkceCodeVerifier, CsrfToken)` - The used verifier and csrf token.
+    /// * `(PkceCodeVerifier, CsrfToken, Nonce)` - The used verifier, csrf token and nonce.
     /// 
     /// # Example 
     /// ```rust
-    /// let pkce = PKCE::new(verifier, csrf);
+    /// let pkce = PKCE::new(verifier, csrf, nonce);
     /// 
-    /// // Cannot use verifier and csrf here due to move
+    /// // Cannot use verifier, csrf, nonce here due to move
     /// 
-    /// let (verifier, csrf) = pkce.destructure;
+    /// let (verifier, csrf, nonce) = pkce.destructure;
     /// 
-    /// // Can use verifer and csrf here, but not pkce anymore
+    /// // Can use verifer, csrf, nonce here, but not pkce anymore
     /// ```
-    pub fn destructure(self) -> (PkceCodeVerifier, CsrfToken) {
-        (self.verifier, self.csrf)
+    pub fn destructure(self) -> (PkceCodeVerifier, CsrfToken, Nonce) {
+        (self.verifier, self.csrf, self.nonce)
     }
 }
 

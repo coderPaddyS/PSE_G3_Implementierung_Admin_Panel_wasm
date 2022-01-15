@@ -4,130 +4,141 @@
 /// 2022, Patrick Schneider <patrick@itermori.de>
 
 use wasm_bindgen::prelude::*;
-use oauth2::{
+use wasm_bindgen::throw_str;
+use openidconnect::{
     ClientId,
-    AuthUrl,
-    RedirectUrl,
-    TokenUrl
+    IssuerUrl,
+    RedirectUrl
 };
-use oauth2::basic::BasicClient;
+use openidconnect::core::{
+    CoreClient,
+    CoreProviderMetadata
+};
+use openidconnect::reqwest::async_http_client;
+
 use super::auth_error::AuthError;
 
-/// The ClientData struct stores the relevant authentication provider data used in the authentication process.
+/// The OIDCClientData struct stores the relevant authentication provider data used in the authentication process.
 /// 
 #[wasm_bindgen]
-pub struct ClientData {
+pub struct OIDCClientData {
 
     /// The URL to redirect to.
     /// Must be known to the authentication provider
     redirect_url: RedirectUrl,
 
-    /// The URL of the authentication provider.
-    auth_url: AuthUrl,
-
-    // The URL to fetch the token of the authentication provider.
-    token_url: TokenUrl,
-
     /// The client id registered at the authentication provider.
-    client_id: ClientId
+    client_id: ClientId,
+
+    metadata: CoreProviderMetadata
 }
 
 #[wasm_bindgen]
-impl ClientData {
+impl OIDCClientData {
 
-    /// Create a new ClientData instance with the given values
+    /// Create a new OIDCClientData instance with the given values.
     /// 
     /// # Arguments
     /// 
-    /// * `auth_url` - The endpoint of the used authentication provider
-    /// * `token_url` - The endpoint used to fetch tokens on
+    /// * `issuer_url` - The url of the used authentication provider
     /// * `client_id` - The at the authentication provider registered client id
     /// * `redirect_url`- The at the authentication provider registered redirection url
     /// 
+    /// # Returns
+    /// 
+    /// * `OIDCClientData`
+    /// 
+    /// # Throws
+    /// If any of the given values are not valid, e.g not a url provided
+    /// 
     /// # Example
     /// ```rust
-    /// let auth_url = String::from("https://auth_provider.org/auth");
-    /// let token_url = String::from("https://auth_provider.org/token");
+    /// let issuer_url = String::from("https://auth_provider.org/");
     /// let client_id = String::from("my-client-id");
     /// let redirect_url = String::from("https://my.site");
-    /// let client: ClientData = ClientData::new(auth_url, token_url, client_id, redirect_url);
+    /// let client: OIDCClientData = OIDCClientData::new(auth_url, token_url, client_id, redirect_url);
     /// ```
-    pub fn from(
-        auth_url: String, 
+    pub async fn from(
+        issuer_url: String, 
         token_url: String,
         client_id: String, 
-        redirect_url: String) -> Result<ClientData, JsValue> {
+        redirect_url: String) -> OIDCClientData {
         
-        match (
-            AuthUrl::new(auth_url),
-            TokenUrl::new(token_url),
+        let (issuer, client, redirect) = match (
+            IssuerUrl::new(issuer_url),
             ClientId::new(client_id),
             RedirectUrl::new(redirect_url)
         ) {
-            (Ok(auth_url), Ok(token_url), client_id, Ok(redirect_url)) => Ok(
-                ClientData::new(
-                    auth_url,
-                    token_url,
-                    client_id,
-                    redirect_url
-                )
-            ),
-            _ => Err(JsValue::from(AuthError::from("The provided data is not correct!")))
+            (Ok(issuer_url), client_id, Ok(redirect_url)) => (issuer_url, client_id, redirect_url),
+            (Err(err), _, _) |
+            (_, _, Err(err)) => throw_str(&format!("{}", err))
+        };
+
+        match OIDCClientData::new(issuer, client, redirect).await {
+            Ok(client_data) => client_data,
+            Err(err) => throw_str(&format!("{}", err))
         }
     }
 }
 
-impl ClientData {
+impl OIDCClientData {
 
-    /// Create a new ClientData instance with the given values
+    /// Create a new OIDCClientData instance with the given values.
+    /// The relevant endpoints are discovered through the provided issuer url.
     /// 
     /// # Arguments
     /// 
-    /// * `auth_url` - The endpoint of the used authentication provider
+    /// * `issuer_url` - The The url of the used authentication provider
     /// * `client_id` - The at the authentication provider registered client id
     /// * `redirect_url`- The at the authentication provider registered redirection url
     /// 
+    /// # Returns
+    /// `Ok(OIDCClientData)` - If the issuer url could be accessed
+    /// `Err(AuthErr)` - If the issuer url could not be accessed
+    /// 
     /// # Example
     /// ```rust
-    /// let auth_url = AuthUrl::new(String::from("https://auth_provider.org/auth"));
+    /// let issuer = IssuerUrl::new(String::from("https://auth_provider.org/"));
     /// let client_id = ClientId::new(String::from("my-client-id"));
     /// let redirect_url = RedirectUrl::new(String::from("https://my.site"));
-    /// let client: ClientData = ClientData::new(auth_url, client_id, redirect_url);
+    /// let client: OIDCClientData = OIDCClientData::new(auth_url, client_id, redirect_url);
     /// ```
-    pub fn new(
-        auth_url: AuthUrl, 
-        token_url: TokenUrl,
+    pub async fn new(
+        issuer_url: IssuerUrl, 
         client_id: ClientId, 
-        redirect_url: RedirectUrl) -> Self {
+        redirect_url: RedirectUrl) -> Result<Self, AuthError> {
         
-        ClientData {
-            auth_url,
-            token_url,
+        let metadata = match CoreProviderMetadata::discover_async(issuer_url, async_http_client).await {
+            Ok(metadata) => metadata,
+            Err(err) => return Err(AuthError::from(err.to_string()))
+        };
+
+        Ok(OIDCClientData {
             client_id,
-            redirect_url
-        }
+            redirect_url,
+            metadata
+        })
     }
 
     /// Create the client represented by the data of this instance.
     /// Consumes this instance!
     /// 
     /// # Returns
-    /// [`BasicClient`](oauth2::basic::BasicClient)
+    /// [`CoreClient`](openidconnect::core::CoreClient)
     /// 
     /// # Example
     /// ```rust
-    /// let data = BasicClient::new(/** */)
-    /// let client: BasicClient = data.create();
+    /// let data: OIDCClientData; // Provided elsewhere
+    /// let client: CoreClient = data.create();
     /// // data cannot be used anymore!
     /// // do stuff with client
     /// ```
-    pub fn create(self) -> BasicClient {
+    pub fn create(self) -> CoreClient {
         
-        BasicClient::new(
+        CoreClient::from_provider_metadata(
+            self.metadata,
             self.client_id,
             None,
-            self.auth_url,
-            Some(self.token_url)
         ).set_redirect_uri(self.redirect_url)
     }
 }
