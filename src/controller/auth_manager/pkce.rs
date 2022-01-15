@@ -12,15 +12,13 @@ use oauth2::{
 
 /// The PKCE structs holds the data involved in the authentication process
 /// 
-#[wasm_bindgen]
-#[derive(Default)]
 pub struct PKCE {
 
     /// The verifier used to verify the response of the authentication process
-    verifier: Option<PkceCodeVerifier>,
+    verifier: PkceCodeVerifier,
 
     /// The csrf token involved in the authentication process
-    csrf: Option<CsrfToken>
+    csrf: CsrfToken
 }
 
 impl PKCE {
@@ -28,7 +26,6 @@ impl PKCE {
     const ID_CSRF: &'static str = "csrf";
 }
 
-#[wasm_bindgen]
 impl PKCE {
 
     /// Create a new pkce instance with default values
@@ -37,12 +34,14 @@ impl PKCE {
     /// ```rust
     /// let pkce: PKCE = PKCE::new()
     /// ```
-    pub fn new() -> Self {
-        PKCE::default()
+    pub fn new(verifier: PkceCodeVerifier, csrf: CsrfToken) -> Self {
+        PKCE {
+            verifier,
+            csrf
+        }
     }
 
     /// Store the state of the pkce in the provided storage.
-    /// Only set state will be stored.
     /// 
     /// # Arguments
     /// 
@@ -65,12 +64,8 @@ impl PKCE {
     /// ```
     pub fn store(&self, storage: Storage) -> Result<(), JsValue> {
 
-        if let Some(verifier) = &self.verifier {
-            storage.set(PKCE::ID_VERIFIER, &verifier.secret())?;
-        }
-        if let Some(csrf) = &self.csrf {
-            storage.set(PKCE::ID_CSRF, &csrf.secret())?;
-        }
+        storage.set(PKCE::ID_VERIFIER, &self.verifier.secret())?;
+        storage.set(PKCE::ID_CSRF, &self.csrf.secret())?;
         Ok(())
     }
 
@@ -101,19 +96,40 @@ impl PKCE {
 
         match storage.get(PKCE::ID_VERIFIER) {
             Ok(Some(verifier)) => {
-                self.verifier = Some(PkceCodeVerifier::new(verifier));
+                self.verifier = PkceCodeVerifier::new(verifier);
             },
             Ok(None) => (),
             Err(e) => return Err(e)
         }
         match storage.get(PKCE::ID_CSRF) {
             Ok(Some(csrf)) => {
-                self.csrf = Some(CsrfToken::new(csrf));
+                self.csrf = CsrfToken::new(csrf);
             },
             Ok(None) => (),
             Err(e) => return Err(e)
         }
         Ok(())
+    }
+
+    /// Destructure this pkce data into its component to use.
+    /// The data is moved out of the data, therefore consumes this instance.
+    /// 
+    /// # Returns
+    /// 
+    /// * `(PkceCodeVerifier, CsrfToken)` - The used verifier and csrf token.
+    /// 
+    /// # Example 
+    /// ```rust
+    /// let pkce = PKCE::new(verifier, csrf);
+    /// 
+    /// // Cannot use verifier and csrf here due to move
+    /// 
+    /// let (verifier, csrf) = pkce.destructure;
+    /// 
+    /// // Can use verifer and csrf here, but not pkce anymore
+    /// ```
+    pub fn destructure(self) -> (PkceCodeVerifier, CsrfToken) {
+        (self.verifier, self.csrf)
     }
 }
 
