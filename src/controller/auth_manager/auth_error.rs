@@ -5,6 +5,7 @@
 
 use wasm_bindgen::prelude::*;
 use std::fmt;
+use std::convert::From;
 
 /// The AuthError represents an error which occurs during the authorization process 
 #[wasm_bindgen]
@@ -27,23 +28,17 @@ impl fmt::Debug for AuthError {
     }
 }
 
-impl AuthError {
-
-    /// Create an AuthError with a cause
-    /// 
-    /// # Variables
-    /// 
-    /// * `cause` - An error message describing the cause
-    /// 
-    /// # Example
-    /// ```rust
-    /// // An error occured
-    /// return Err(AuthError::new(String::from("Something went wrong")))
-    /// ```
-    pub fn new(cause: String) -> Self {
+impl From<String> for AuthError {
+    fn from(cause: String) -> AuthError{
         AuthError {
             cause
         }
+    }
+}
+
+impl From<&str> for AuthError {
+    fn from(cause: &str) -> AuthError{
+        AuthError::from(String::from(cause))
     }
 }
 

@@ -5,3 +5,6 @@
 
 mod auth_manager;
 pub use auth_manager::AuthManager;
+
+mod framework;
+pub use framework::Framework;

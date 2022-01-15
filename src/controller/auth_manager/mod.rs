@@ -3,6 +3,8 @@
 /// 
 /// 2022, Patrick Schneider <patrick@itermori.de>
 
+// use crate::console_log;
+
 mod pkce;
 pub use pkce::PKCE;
 
@@ -13,6 +15,7 @@ mod auth_error;
 pub use auth_error::AuthError;
 
 use wasm_bindgen::prelude::*;
+use wasm_bindgen_test::console_log;
 use web_sys::Storage;
 use oauth2::{
     PkceCodeChallenge,
@@ -79,7 +82,7 @@ impl AuthManager {
     ///     // handle error
     /// }
     /// ```
-    pub fn store(&self, storage: Storage) -> Result<(), JsValue> {
+    pub fn store(&self, storage: &Storage) -> Result<(), JsValue> {
         if let Some(pkce) = &self.pkce {
             pkce.store(storage)?
         }
@@ -109,10 +112,8 @@ impl AuthManager {
     ///     // handle error
     /// }
     /// ```
-    pub fn load(&mut self, storage: Storage) -> Result<(), JsValue> {
-        if let Some(pkce) = &mut self.pkce {
-            pkce.load(storage)?
-        }
+    pub fn load(&mut self, storage: &Storage) -> Result<(), JsValue> {
+        self.pkce = Some(PKCE::load_from(storage)?);
 
         Ok(())
     }
@@ -145,7 +146,7 @@ impl AuthManager {
     ///     }
     /// }
     /// ```
-    pub fn init_authentication(&mut self, storage: Storage) -> Result<Url, JsValue>{
+    pub fn init_authentication(&mut self, storage: &Storage) -> Result<Url, JsValue>{
     
         // Generate a PKCE challenge.
         let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
@@ -174,6 +175,7 @@ impl AuthManager {
     /// 
     /// * `code`  - The authorization code of the response. See [`AuthorizationCode`](oauth2::AuthorizationCode)
     /// * `state` - The state code of the response. See [`CsrfToken`](oauth2::CsrfToken)
+    /// * `storage` - The storage to read the previously generated authorization data from. [`Some(&Storage)](Storage)
     /// 
     /// # Returns
     /// 
@@ -184,35 +186,45 @@ impl AuthManager {
     /// ```rust
     /// let auth = AuthManager::new(/** */);
     /// let redirect = auth.init_authentication(/** */);
+    /// let storage: Storage; // already provided elsewhere
     /// /* Authenticate and retreive code and state */
-    /// let (auth, result) = auth.exchange_token(code, state);
+    /// let (auth, result) = auth.exchange_token(code, state, Some(&storage));
     /// if let Err(err) = result {
     ///     // Handle Error
     /// }
     /// // You now can access the tokens
     /// ```
-    pub async fn exchange_token(mut self, code: AuthorizationCode, state: CsrfToken) -> (Self, Result<(), AuthError>) {
+    pub async fn exchange_token(
+        mut self, 
+        code: AuthorizationCode, 
+        state: CsrfToken,
+        storage: Option<&Storage>
+    ) -> (Self, Result<(), AuthError>) {
         
-        let (verifier, csrf) = match self.pkce {
-            Some(pkce) => {
-                self.pkce = None;
-                pkce.destructure()
-            },
-            None => {
+        if let None = self.pkce {
+            if let Some(store) = storage {
+                if let Err(_) = self.load(&store) {
+                    return (
+                        self, 
+                        Err(AuthError::from("Could not load data from given store!"))
+                    )
+                }
+            } else {
                 return (
                     self, 
-                    Err(AuthError::new(String::from("No authentication process was initiated!")))
+                    Err(AuthError::from("No authentication process was initiated!"))
                 );
             }
-        };
+        }
+        
+        let (verifier, csrf) = self.pkce.unwrap().destructure();
+        self.pkce = None;
         
         if csrf.secret() != state.secret() {
             return (
                 self,
                 Err(
-                    AuthError::new(
-                        String::from("Cross-Site Request Forgery detected! The returned state did not match!")
-                    )
+                    AuthError::from("Cross-Site Request Forgery detected! The returned state did not match!")
                 )
             );
         }
@@ -227,10 +239,13 @@ impl AuthManager {
             Err(err) => {
                 return (
                     self,
-                    Err(AuthError::new(err.to_string()))
+                    Err(AuthError::from(err.to_string()))
                 )
             }
         };
+
+        console_log!("{:?}", self.tokens);
+        print!("{:?}", self.tokens);
         
         (self, Ok(()))
     }
@@ -261,14 +276,14 @@ impl AuthManager {
             .map(|(key, value)| (key.to_string(), value.to_string()))
             .collect();
         if queries.is_empty() {
-            return Err(AuthError::new(String::from("No response is present in the given url!")))
+            return Err(AuthError::from("No response is present in the given url!"))
         }
         
         let auth_code: AuthorizationCode = match queries.get(Self::URL_AUTH_CODE) {
 
             Some(code) => AuthorizationCode::new(String::from(code)),
             None => {
-                return Err(AuthError::new(String::from("There was no authorization code present in the provided url!")))
+                return Err(AuthError::from("There was no authorization code present in the provided url!"))
             }
         };
 
@@ -276,7 +291,7 @@ impl AuthManager {
 
             Some(token) => CsrfToken::new(String::from(token)),
             None => {
-                return Err(AuthError::new(String::from("There was no state present in the provided url!")))
+                return Err(AuthError::from("There was no state present in the provided url!"))
             }
         };
 
