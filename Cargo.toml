@@ -25,9 +25,9 @@ features = [
   "Location"
 ]
 
-[dependencies.oauth2]
+[dependencies.openidconnect]
 features = ["reqwest"]
-version = "4.1.0"
+version = "2.2.0"
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3.28"

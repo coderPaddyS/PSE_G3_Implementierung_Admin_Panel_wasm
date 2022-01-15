@@ -8,10 +8,10 @@ use wasm_bindgen::throw_str;
 use web_sys::Storage;
 use super::AuthManager;
 use super::auth_manager::{
-    ClientData,
+    OIDCClientData,
 };
 
-use oauth2::url::Url;
+use openidconnect::url::Url;
 
 #[wasm_bindgen]
 pub struct Framework {
@@ -27,7 +27,7 @@ impl Framework {
     /// 
     /// # Arguments
     /// 
-    /// * `client_data` - See [`ClientData`](ClientData)
+    /// * `client_data` - See [`OIDCClientData`](OIDCClientData)
     /// * `storage` - A [`Storage`](Storage)
     /// 
     /// # Returns
@@ -36,12 +36,12 @@ impl Framework {
     /// 
     /// # Example
     /// ```rust
-    /// let client_data = ClientData::from(/* */);
-    /// let storage: Storage = /* */;
+    /// let client_data: OIDCClientData; // Already elsewhere provided
+    /// let storage: Storage; // Already elsewhere provided
     /// let framework: Framework = Framework::new(client_data, storage);
     /// ```
     pub fn new(
-        client_data: ClientData,
+        client_data: OIDCClientData,
         storage: Storage
     ) -> Framework {
         Framework {
@@ -68,7 +68,7 @@ impl Framework {
 
         match self.auth.init_authentication(&self.session) {
             Ok(url) => url.to_string(),
-            Err(err) => throw_str(format!("{:?}", err))
+            Err(err) => throw_str(&format!("{:?}", err))
         }
     }
 

@@ -9,35 +9,53 @@ mod pkce;
 pub use pkce::PKCE;
 
 mod client_data;
-pub use client_data::ClientData;
+pub use client_data::OIDCClientData;
 
 mod auth_error;
 pub use auth_error::AuthError;
 
 use wasm_bindgen::prelude::*;
-use wasm_bindgen_test::console_log;
 use web_sys::Storage;
-use oauth2::{
+use openidconnect::{
     PkceCodeChallenge,
     CsrfToken,
+    Nonce,
     AuthorizationCode,
-    StandardTokenResponse,
-    EmptyExtraTokenFields,
-    TokenResponse
+    TokenResponse,
+    IdToken,
+    IdTokenClaims,
+    AccessToken,
+    RefreshToken,
+    EmptyAdditionalClaims,
+    AccessTokenHash,
+    OAuth2TokenResponse
 };
-use oauth2::basic::{
-    BasicClient,
-    BasicTokenType
+use openidconnect::core::{
+    CoreAuthenticationFlow,
+    CoreClient,
+    CoreGenderClaim,
+    CoreJweContentEncryptionAlgorithm,
+    CoreJwsSigningAlgorithm,
+    CoreJsonWebKeyType,
 };
-use oauth2::url::Url;
-use oauth2::reqwest::async_http_client;
+use openidconnect::url::Url;
+use openidconnect::reqwest::async_http_client;
 
 use std::collections::HashMap;
 
 pub struct AuthManager {
     pkce: Option<PKCE>,
-    client: BasicClient,
-    tokens: Option<StandardTokenResponse<EmptyExtraTokenFields, BasicTokenType>>
+    client: Option<CoreClient>,
+    id_token: Option<IdToken<
+        EmptyAdditionalClaims, 
+        CoreGenderClaim, 
+        CoreJweContentEncryptionAlgorithm, 
+        CoreJwsSigningAlgorithm, 
+        CoreJsonWebKeyType
+        >>,
+    access_token: Option<AccessToken>,
+    refresh_token: Option<RefreshToken>,
+    claims: Option<IdTokenClaims<EmptyAdditionalClaims, CoreGenderClaim>>
 }
 
 impl AuthManager {
@@ -49,14 +67,17 @@ impl AuthManager {
     /// 
     /// # Example
     /// ```rust
-    /// let client_data = ClientData::new(/** */);
+    /// let client_data: OIDCClientData // Already elsewhere provided;
     /// let auth: AuthManager = AuthManager::new(client);
     /// ```
-    pub fn new(client_data: ClientData) -> Self {
+    pub fn new(client_data: OIDCClientData) -> Self {
         AuthManager {
             pkce: None,
-            client: client_data.create(),
-            tokens: None
+            client: Some(client_data.create()),
+            id_token: None,
+            access_token: None,
+            refresh_token: None,
+            claims: None
         }
     }
 
@@ -152,17 +173,19 @@ impl AuthManager {
         let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
     
         // Generate the full authorization URL and the csrf token
-        let (redirect, csrf) = self.client
-            .authorize_url(CsrfToken::new_random)
-            // Set the desired scopes.
-            // .add_scope(Scope::new("read".to_string()))
-            // .add_scope(Scope::new("write".to_string()))
-            // Set the PKCE code challenge.
-            .set_pkce_challenge(challenge)
-            .url();
+        let (redirect, csrf, nonce) = match &self.client {
+            Some(client) => client.authorize_url(
+                                CoreAuthenticationFlow::AuthorizationCode,
+                                CsrfToken::new_random,
+                                Nonce::new_random
+                            )
+                            .set_pkce_challenge(challenge)
+                            .url(),
+            None => return Err(JsValue::from(AuthError::from("No client was setup!")))
+        };
 
-        // Store the verifier and the csrf token to verify server response
-        self.pkce = Some(PKCE::new(verifier, csrf));
+        // Store the verifier, csrf token and nonce to verify server response
+        self.pkce = Some(PKCE::new(verifier, csrf, nonce));
         self.store(storage)?;
 
         Ok(redirect)
@@ -170,6 +193,7 @@ impl AuthManager {
 
     /// Exchange the given authorization code for the tokens at the authentication provider.
     /// Check for security issues (Cross-Site Request Forgery) by providing the state answer.
+    /// After this method returned successfully, the user was successfully authorized and the claims are available.
     /// 
     /// # Params
     /// 
@@ -184,10 +208,10 @@ impl AuthManager {
     /// 
     /// # Example
     /// ```rust
-    /// let auth = AuthManager::new(/** */);
-    /// let redirect = auth.init_authentication(/** */);
+    /// let auth: AuthManager; // Already elsewhere provided
+    /// let redirect: Url; // Already elsewhere provided
     /// let storage: Storage; // already provided elsewhere
-    /// /* Authenticate and retreive code and state */
+    /// // Authenticate and retreive code and state
     /// let (auth, result) = auth.exchange_token(code, state, Some(&storage));
     /// if let Err(err) = result {
     ///     // Handle Error
@@ -201,6 +225,7 @@ impl AuthManager {
         storage: Option<&Storage>
     ) -> (Self, Result<(), AuthError>) {
         
+        // If no pkce data is present, try to load the data from the provided storage
         if let None = self.pkce {
             if let Some(store) = storage {
                 if let Err(_) = self.load(&store) {
@@ -216,10 +241,22 @@ impl AuthManager {
                 );
             }
         }
+
+        let client = match self.client {
+            Some(client) => {
+                self.client = None;
+                client
+            },
+            None => return (
+                self,
+                Err(AuthError::from("No client was setup to authenticate!"))
+            )
+        };
         
-        let (verifier, csrf) = self.pkce.unwrap().destructure();
+        let (verifier, csrf, nonce) = self.pkce.unwrap().destructure();
         self.pkce = None;
         
+        // check for csrf errors
         if csrf.secret() != state.secret() {
             return (
                 self,
@@ -228,14 +265,16 @@ impl AuthManager {
                 )
             );
         }
-        let token_result = self.client
+
+        // retrieve the tokens
+        let token_result = client
             .exchange_code(code)
             .set_pkce_verifier(verifier)
             .request_async(async_http_client)
             .await;
 
-        self.tokens = match token_result {
-            Ok(tokens) => Some(tokens),
+        let tokens = match token_result {
+            Ok(tokens) => tokens,
             Err(err) => {
                 return (
                     self,
@@ -244,9 +283,62 @@ impl AuthManager {
             }
         };
 
-        console_log!("{:?}", self.tokens);
-        print!("{:?}", self.tokens);
-        
+        // Extract the id_token and the claims containing the user information
+        let id_token = match tokens.id_token() {
+            Some(id) => id,
+            None => return (
+                self,
+                Err(AuthError::from("The server did not respond with an id token!"))
+            )
+        };
+
+        let claims = match id_token.claims(&client.id_token_verifier(), &nonce) {
+            Ok(claims) => claims,
+            Err(err) => return (
+                self,
+                Err(AuthError::from(err.to_string()))
+            )
+        };
+
+        // Check if the access_token got tampered and signed differently
+        // and throw errors if anything does not line up.
+        if let Some(expected_hash_algorithm) = claims.access_token_hash() {
+            
+            let siging_alg = match id_token.signing_alg() {
+                Ok(alg) => alg,
+                Err(err) => return (
+                    self,
+                    Err(AuthError::from(err.to_string()))
+                )
+            };
+            let actual_hash_algorithm = match 
+                AccessTokenHash::from_token(
+                    tokens.access_token(),
+                    &siging_alg
+                ) {
+                Ok(alg) => alg,
+                Err(err) => return (
+                    self,
+                    Err(AuthError::from(err.to_string()))
+                )
+            };
+            if *expected_hash_algorithm != actual_hash_algorithm {
+                return (
+                    self,
+                    Err(AuthError::from("The used and expected hash algorithms are not the same!"))
+                )
+            }
+        }
+
+        // save the extracted id, access and refresh tokens as well as the claims for later usage
+        self.id_token = Some(id_token.clone());
+        self.access_token = Some(tokens.access_token().clone());
+        self.refresh_token = match tokens.refresh_token() {
+            Some(refresh) => Some(refresh.clone()),
+            None => None
+        };
+        self.claims = Some(claims.clone());
+
         (self, Ok(()))
     }
 
@@ -297,20 +389,6 @@ impl AuthManager {
 
         Ok((auth_code, state))
     }
-
-    // TODO: Remove this function since it is disabling any security regarding the access token
-    //       Debugging only!
-    // 
-    // pub fn access_token(&self) -> Result<&String, AuthError> {
-    //     match &self.tokens {
-    //         Some(tokens) => {
-    //             Ok(tokens.access_token().secret())
-    //         }
-    //         None => {
-    //             Err(AuthError::new(String::from("No access token available!")))
-    //         }
-    //     }
-    // }
 
 }
 
